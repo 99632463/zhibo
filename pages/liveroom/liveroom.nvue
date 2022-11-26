@@ -1,0 +1,271 @@
+<template>
+	<view class="page">
+	</view>
+</template>
+
+<script>
+	import $C from '@/common/config.js';
+	import $H from '@/common/request.js';
+	import { mapState } from 'vuex';
+	var pusher = null;
+	// 当前webview
+	let currentWebview = null;
+
+	export default {
+		data() {
+			return {
+				mode:"SD",
+				enableCamera:true,
+				position:"back",
+				beauty:0,
+				whiteness:0,
+				
+				detail:{
+					"created_time": "",
+					"id": 0,
+					"title": "",
+					"cover": "",
+					"user_id": 0,
+					"look_count": 0,
+					"coin": 0,
+					"key": "",
+					"status": 0,
+					"userId": 0,
+					"user": {
+						"id": 0,
+						"username": "",
+						"avatar": ""
+					}
+				},
+				sign:"",
+				list:[],
+				
+				// 是否开始推流
+				isStart:false,
+				isPause:false,
+				isget:false
+			}
+		},
+		onLoad(e) {
+			var pages = getCurrentPages();  
+			var page = pages[pages.length - 1];  
+			currentWebview = page.$getAppWebview();
+			// currentWebview = this.$scope.$getAppWebview()
+			if(e.options){
+				let options = JSON.parse(e.options)
+				this.mode = options.mode
+				this.position = options.position
+				this.beauty = options.beauty
+				this.whiteness = options.whiteness
+			}
+			if(e.data){
+				let d = JSON.parse(decodeURIComponent(e.data))
+				this.detail = d.data
+				this.sign = d.sign
+			}
+			
+			this.initPage()
+		},
+		mounted() {
+			uni.getSubNVueById('live-actions').show('fade-in',100)
+			setTimeout(()=>{
+				uni.$emit('liveroom',{
+					detail:this.detail,
+					mode:this.mode,
+					position: this.position,
+					beauty:this.beauty,
+					whiteness:this.whiteness,
+				})
+			},200)
+			uni.$on('liveActions',(e)=>{
+				this[e.event](e.key,e.value)
+			})
+		},
+		onBackPress() {
+			console.log('返回');
+			if(!this.isget){
+				this.back()
+				return true
+			}
+		},
+		destroyed() {
+			uni.$off('liveActions')
+			console.log('liveroom destroyed');
+		},
+		computed: {
+			...mapState({
+				user:state=>state.user,
+				socket:state=>state.socket,
+				token:state=>state.token
+			}),
+			src() {
+				if(this.detail.key == '' || this.sign == ''){
+					return ''
+				}
+				return `${$C.livePushBaseUrl}/live/${this.detail.key}?sign=${this.sign}`
+			}
+		},
+		methods: {
+			// 初始化页面
+			initPage(){
+				pusher = new plus.video.LivePusher('pusher', {
+					url: '',
+					top: '0px',
+					left: '0px',
+					width: '100%',
+					mode: this.mode,
+					height: '100%',
+					'enable-camera':this.enableCamera,
+					position: 'absolute',
+					beauty: this.beauty, //美颜 0 关  1  开
+					whiteness:this.whiteness, 
+					aspect: '9:16',
+					zindex:50
+				});
+				currentWebview.append(pusher);
+				// if(this.position != 'back'){
+				// 	this.switchCamera()
+				// }
+				this.$nextTick(()=>{
+					console.log('开始推流');
+					// 开始推流
+					this.start()
+				})
+			},
+			chooseKeyValue(key,value){
+				this[key] = value
+				let option = {}
+				option[key] = value
+				pusher.setStyles(option)
+			},
+			pauseOrPlay(){
+				if(!this.isPause){
+					return uni.showModal({
+						content: '是否要暂停推流？',
+						success: (res)=>{
+							if (res.cancel) return
+							this.pause()
+						}
+					});
+				}
+				// 继续推流
+				this.resume()
+			},
+			// 退出直播
+			back(){
+				uni.showModal({
+					content: '是否要退出直播间？',
+					success: (res)=> {
+						if (res.cancel) {
+							return
+						}
+						this.stop()
+						this.isget = true
+						uni.navigateBack({
+							delta: 1
+						});
+						setTimeout(()=>{
+							uni.getSubNVueById('live-actions').close()
+							pusher.stop()
+							pusher.close()
+						},300)
+						uni.showToast({
+							title: '退出直播间成功',
+							icon: 'none'
+						});
+					}
+				});
+			},
+			switchCamera(){
+				pusher.switchCamera()
+			},
+			// 开始推流
+			start(){
+				uni.showLoading({ title: '加载中...'});
+				// 设置推流服务器
+				pusher.setStyles({
+					url: this.src
+				});
+				$H.post('/live/changestatus',{
+					id:this.detail.id,
+					type:"play"
+				},{ token:true }).then(res=>{
+					pusher.start(); //推流开启
+					this.isStart = true
+					uni.$emit('liveroom',{
+						isStart:this.isStart
+					})
+					uni.showToast({ title: '操作成功', icon: 'none'})
+				}).finally(()=>{
+					uni.hideLoading()
+				})
+			},
+			pause(){
+				uni.showLoading({ title: '暂停直播中...'});
+				$H.post('/live/changestatus',{
+					id:this.detail.id,
+					type:"pause"
+				},{ token:true }).then(res=>{
+					pusher.pause();
+					this.isPause = true
+					uni.$emit('liveroom',{
+						isPause:this.isPause
+					})
+					uni.showToast({ title: '操作成功', icon: 'none'})
+				}).finally(()=>{
+					uni.hideLoading()
+				})
+			},
+			resume(){
+				uni.showLoading({ title: '加载中...'});
+				$H.post('/live/changestatus',{
+					id:this.detail.id,
+					type:"play"
+				},{ token:true }).then(res=>{
+					pusher.resume();
+					this.isPause = false
+					uni.$emit('liveroom',{
+						isPause:this.isPause
+					})
+					uni.showToast({ title: '操作成功', icon: 'none'})
+				}).finally(()=>{
+					uni.hideLoading()
+				})
+			},
+			stop(){
+				uni.showLoading({ title: '停止直播中...'});
+				$H.post('/live/changestatus',{
+					id:this.detail.id,
+					type:"stop"
+				},{ token:true }).then(res=>{
+					pusher.pause(); //结束直播推流
+					pusher.close();
+					this.isStart = false
+					uni.$emit('liveroom',{
+						isStart:this.isStart
+					})
+					uni.showToast({ title: '操作成功', icon: 'none'})
+				}).finally(()=>{
+					uni.hideLoading()
+				})
+			},
+		}
+	}
+</script>
+
+<style>
+.page{
+	flex: 1;
+}
+.btn{
+	height: 80rpx;
+	border-radius: 100rpx;
+	background-color: rgba(255,255,255,0.12);
+	align-items: center;
+	justify-content: center;
+}
+.btn-icon{
+	width: 80rpx;
+	margin-right: 20rpx;
+}
+</style>
